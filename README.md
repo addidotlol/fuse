@@ -2,7 +2,7 @@
 
 streams vtube studio to any web page over webrtc w/ full transparency. uses NDI, AV1 encoding, and a WebGL shader to composite the alpha channel on the client.
 
-<video src="https://github.com/user-attachments/assets/1ca04d94-d3de-4826-9f0b-27e8cb593e3f" alt="example"/>
+<video src="https://github.com/user-attachments/assets/1ca04d94-d3de-4826-9f0b-27e8cb593e3f" alt="example"></video>
 
 
 ## how it works / flow
