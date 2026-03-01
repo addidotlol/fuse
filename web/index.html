@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fuse - WebRTC Alpha Compositing Test</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: repeating-conic-gradient(#808080 0% 25%, #a0a0a0 0% 50%) 0 0 / 20px 20px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, sans-serif;
+    color: #fff;
+  }
+  #status {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    z-index: 10;
+  }
+  #status .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: #f44;
+  }
+  #status.connected .dot { background: #4f4; }
+  canvas {
+    max-width: 90vw;
+    max-height: 90vh;
+  }
+  /* Hidden video element that receives the WebRTC stream */
+  video { display: none; }
+</style>
+</head>
+<body>
+  <div id="status"><span class="dot"></span><span id="statusText">Connecting...</span></div>
+  <canvas id="canvas"></canvas>
+  <video id="video" autoplay muted playsinline></video>
+
+<script>
+// WebGL shader that splits a double-height VP9/AV1 frame into color (top) + alpha (bottom)
+// and renders with transparency.
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('statusText');
+
+// --- WebRTC Connection ---
+
+let currentPC = null;
+
+async function connect() {
+  // Clean up previous connection
+  if (currentPC) {
+    currentPC.onconnectionstatechange = null;
+    currentPC.ontrack = null;
+    currentPC.close();
+    currentPC = null;
+  }
+
+  const pc = new RTCPeerConnection();
+  currentPC = pc;
+
+  pc.addTransceiver('video', { direction: 'recvonly' });
+
+  pc.ontrack = (e) => {
+    video.srcObject = e.streams[0];
+    video.play();
+    statusEl.classList.add('connected');
+    statusText.textContent = 'Connected';
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc !== currentPC) return; // stale
+    const state = pc.connectionState;
+    if (state === 'failed' || state === 'closed') {
+      statusEl.classList.remove('connected');
+      statusText.textContent = 'Disconnected - retrying...';
+      setTimeout(connect, 3000);
+    } else if (state === 'disconnected') {
+      statusEl.classList.remove('connected');
+      statusText.textContent = 'Reconnecting...';
+      // Give it a moment — disconnected can recover on its own
+      setTimeout(() => {
+        if (pc === currentPC && pc.connectionState === 'disconnected') {
+          connect();
+        }
+      }, 5000);
+    }
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  try {
+    const resp = await fetch('/offer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pc.localDescription),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const answer = await resp.json();
+    await pc.setRemoteDescription(answer);
+  } catch (err) {
+    statusText.textContent = `Connection failed: ${err.message}`;
+    setTimeout(connect, 3000);
+  }
+}
+
+// --- WebGL Alpha Compositing ---
+
+function initWebGL() {
+  const gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: false });
+  if (!gl) {
+    statusText.textContent = 'WebGL2 not supported';
+    return null;
+  }
+
+  // Vertex shader: full-screen quad
+  const vsSource = `#version 300 es
+    const vec2 pos[4] = vec2[](
+      vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(1, 1)
+    );
+    const vec2 uv[4] = vec2[](
+      vec2(0, 1), vec2(1, 1), vec2(0, 0), vec2(1, 0)
+    );
+    out vec2 vUV;
+    void main() {
+      gl_Position = vec4(pos[gl_VertexID], 0.0, 1.0);
+      vUV = uv[gl_VertexID];
+    }
+  `;
+
+  // Fragment shader: split double-height texture into color (top) + alpha (bottom)
+  const fsSource = `#version 300 es
+    precision highp float;
+    uniform sampler2D uVideo;
+    in vec2 vUV;
+    out vec4 fragColor;
+    void main() {
+      // Top half = color (y: 0.0 to 0.5 in texture space)
+      vec2 colorUV = vec2(vUV.x, vUV.y * 0.5);
+      vec3 color = texture(uVideo, colorUV).rgb;
+
+      // Bottom half = alpha (y: 0.5 to 1.0 in texture space)
+      vec2 alphaUV = vec2(vUV.x, vUV.y * 0.5 + 0.5);
+      float alpha = texture(uVideo, alphaUV).r;
+
+      fragColor = vec4(color, alpha);
+    }
+  `;
+
+  function compileShader(type, source) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, source);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('Shader compile error:', gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  }
+
+  const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+  const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('Program link error:', gl.getProgramInfoLog(prog));
+    return null;
+  }
+
+  gl.useProgram(prog);
+
+  // Texture for video frames
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.uniform1i(gl.getUniformLocation(prog, 'uVideo'), 0);
+
+  // Enable blending for transparency
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  // Empty VAO (we generate vertices in the shader)
+  gl.bindVertexArray(gl.createVertexArray());
+
+  return { gl, tex };
+}
+
+const webgl = initWebGL();
+
+function render() {
+  if (!webgl) return;
+  const { gl, tex } = webgl;
+
+  // Only render when video has data
+  if (video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+    // The video is double-height (e.g. 1920x2160 for 1080p content).
+    // Canvas should be half the video height (the actual content size).
+    const contentWidth = video.videoWidth;
+    const contentHeight = video.videoHeight / 2;
+
+    if (canvas.width !== contentWidth || canvas.height !== contentHeight) {
+      canvas.width = contentWidth;
+      canvas.height = contentHeight;
+      gl.viewport(0, 0, contentWidth, contentHeight);
+    }
+
+    // Upload video frame to texture
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+
+    // Clear with transparent black
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Draw full-screen quad
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  requestAnimationFrame(render);
+}
+
+// Start
+connect();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

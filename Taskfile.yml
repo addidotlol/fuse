@@ -1,0 +1,82 @@
+version: "3"
+
+vars:
+  BINARY: fuse.exe
+  MODULE: github.com/addidotlol/fuse
+
+tasks:
+  default:
+    desc: Build the project
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the fuse binary
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BINARY}}"
+    cmds:
+      - go build -ldflags "-H=windowsgui" -o {{.BINARY}} .
+
+  run:
+    desc: Build and run fuse
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}}
+
+  dev:
+    desc: Run with file watching (requires air)
+    cmds:
+      - air
+
+  tidy:
+    desc: Tidy and verify go modules
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  fmt:
+    desc: Format all Go source files
+    cmds:
+      - gofmt -s -w .
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  check:
+    desc: Run fmt, vet, and tests
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+
+  mkicon:
+    desc: Generate the tray icon from icon.svg
+    sources:
+      - icon.svg
+      - cmd/mkicon/main.go
+    generates:
+      - tray/icon.go
+    cmds:
+      - go run ./cmd/mkicon
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BINARY}}
+      - rm -f fuse.log
