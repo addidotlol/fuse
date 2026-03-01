@@ -20,6 +20,7 @@ flowchart LR
 
 ## requirements
 
+- Windows
 - NDI Runtime (`winget install NDI.NDIRuntime`)
 - FFmpeg (`winget install Gyan.FFmpeg`)
 - Ideally, an Intel GPU for AV1 encoding. There is no implementation for any other GPU, but it will fallback to software encoding if needed.
