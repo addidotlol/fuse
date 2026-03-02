@@ -3,6 +3,8 @@ version: "3"
 vars:
   BINARY: fuse.exe
   MODULE: github.com/addidotlol/fuse
+  GOARCH:
+    sh: go env GOARCH
 
 tasks:
   default:
@@ -12,14 +14,25 @@ tasks:
 
   build:
     desc: Build the fuse binary
+    deps: [mkrsrc]
     sources:
       - "**/*.go"
       - go.mod
       - go.sum
+      - tray/icon.ico
     generates:
       - "{{.BINARY}}"
     cmds:
       - go build -ldflags "-H=windowsgui" -o {{.BINARY}} .
+
+  mkrsrc:
+    desc: Generate Windows resource file for exe icon
+    sources:
+      - tray/icon.ico
+    generates:
+      - rsrc_windows_{{.GOARCH}}.syso
+    cmds:
+      - go run github.com/akavel/rsrc@v0.10.2 -arch {{.GOARCH}} -ico tray/icon.ico -o rsrc_windows_{{.GOARCH}}.syso
 
   run:
     desc: Build and run fuse
@@ -80,3 +93,4 @@ tasks:
     cmds:
       - rm -f {{.BINARY}}
       - rm -f fuse.log
+      - rm -f rsrc_windows_{{.GOARCH}}.syso
