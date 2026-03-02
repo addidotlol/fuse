@@ -94,7 +94,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: mux,
+		Handler: corsAllowAll(mux),
 	}
 
 	// Start HTTP server
@@ -111,6 +111,21 @@ func NewServer(cfg Config) (*Server, error) {
 	}()
 
 	return s, nil
+}
+
+func corsAllowAll(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleOffer processes a WebRTC SDP offer from a browser client and returns
