@@ -1,4 +1,4 @@
-# fuse
+# <img src="./icon.svg" alt="fuse icon" width="28" /> fuse
 
 streams vtube studio to any web page over webrtc w/ full transparency. uses NDI, AV1 encoding, and a WebGL shader to composite the alpha channel on the client.
 
